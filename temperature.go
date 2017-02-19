@@ -5,40 +5,34 @@ import "fmt"
 import "sync"
 import "github.com/NickJLange/tickdatabase"
 
-// #include <stdio.h>
-// #include <string.h>
-// #include <smc.h>
-//#include <CoreFoundation/CoreFoundation.h>
-//#include <CoreFoundation/CFArray.h>
-//#include <IOKit/IOKitLib.h>
-//#include <IOKit/ps/IOPSKeys.h>
-//#include <IOKit/ps/IOPowerSources.h>
-// #cgo CFLAGS: -framework IOKit -framework CoreFoundation  -stdlib=libstdc++ -Wno-deprecated-declarations
-// #cgo LDFLAGS: -framework IOKit -framework CoreFoundation  -stdlib=libstdc++ -Wno-deprecated-declarations
-import "C"
 
 
 //CPUKeyString is a magic flag from the .h file - I don't think I can steal it.
 const CPUKeyString string  = "TC0P"
+//BatteryKeyString is a magic from include - //FIXME -any way to automate these?
+const BatteryKeyString = "TB0T"
 
-//openInternals is a Darwin implentation that needs to be remaned
-//Does this make the world happy now?
-func openInternals() {
-   C.SMCOpen();
-}
-//closeInternals is a Darwin implementation - I dont' think we'll ahve this on Windows or Mac
-func closeInternals() {
-   C.SMCClose()
+
+type fetchType func(string)(float64)
+
+
+
+var smcAll = map[string]fetchType{
+    CPUKeyString :readTemperature,
+    BatteryKeyString :readTemperature,
 }
 
-//readTemperature does what is on the tin using the IOUtil Framkework API
-// Something interesting here
-func readTemperature() float64 {
-   var tossMe C.double
-   tossMe = C.SMCGetTemperature(C.CString(CPUKeyString))
-   //fmt.Printf("ECHO WORLD %v", tossMe)
-   return float64(tossMe)
+var smcMapping = map[string]tickdatabase.Key{
+  CPUKeyString :"CPUTemperature",
+  BatteryKeyString :"BatteryTemperature",
 }
+
+
+
+/*
+   //TODO INSERT ME - OS SPECIFIC INTERNALS - HOW DOES THIS WORK???
+
+*/
 
 //PopulateTemperature feeds the latest Temperature into a TickDB reference then pushes out the old value.
 //Blah blah blah
@@ -48,21 +42,26 @@ func PopulateTemperature(TickDB tickdatabase.TTickDB) {
   openInternals()
   //Need to make this OS-independent
   defer closeInternals()
+  //Lazy Initialization of End
   End := time.Since(start)
 
   for  true {
+    // This is a bug? Move to end of loop since I already have the value...
    start = time.Now()
    var myLock sync.RWMutex
    myLock.Lock()
-   x:=fmt.Sprintf("%v",readTemperature())
-
-   TickDB.Current["temperature"]=fmt.Sprintf("%v",x)
-   TickDB.Current["lastRun"] = fmt.Sprintf("%v", End.Nanoseconds())
+   for k,f := range smcAll {
+    x:=fmt.Sprintf("%v",f(k))
+   TickDB.Current[smcMapping[k]]=fmt.Sprintf("%v",x)
 //FIXME: I'm not sure this is correct
-   TickDB.Historical["temperature"] = append(TickDB.Historical["temperature"],x)
+   TickDB.Historical[smcMapping[k]] = append(TickDB.Historical[smcMapping[k]],x)
+
+
+   }
+   End = time.Since(start)
+   TickDB.Current["lastRun"] = fmt.Sprintf("%v", End.Nanoseconds())
    TickDB.Historical["lastRun"] = append(TickDB.Historical["lastRun"],fmt.Sprintf("%v",End.Nanoseconds()))
    myLock.Unlock()
-   End = time.Since(start)
    fmt.Printf("It took this long to run %v\n",End)
    time.Sleep(10*time.Second)
  }
